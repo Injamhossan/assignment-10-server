@@ -1,9 +1,12 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
 const express = require('express');
 const cors = require('cors');
 const { connectToDatabase } = require('./config/db');
-require('dotenv').config();
-console.log('MONGO_URI from env:', !!process.env.MONGO_URI); // true হলে আছে
+
+
+console.log('MONGO_URI from env:', !!process.env.MONGO_URI); 
 
 
 const app = express();
@@ -13,6 +16,7 @@ async function start() {
   try {
     console.log('Starting server bootstrap...');
     if (!process.env.MONGO_URI) {
+      
       throw new Error('MONGO_URI is not defined in .env');
     }
     await connectToDatabase(process.env.MONGO_URI);
@@ -27,8 +31,7 @@ async function start() {
       console.log(`🚀 Server started on port ${PORT}`);
     });
 
-    // graceful shutdown
-    const shutdown = async () => {
+      const shutdown = async () => {
       console.log('Shutdown initiated');
       server.close(() => console.log('HTTP server closed'));
       process.exit(0);

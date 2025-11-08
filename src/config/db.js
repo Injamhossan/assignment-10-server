@@ -1,4 +1,3 @@
-// src/config/db.js
 const { MongoClient } = require('mongodb');
 
 let client;
@@ -10,7 +9,7 @@ async function connectToDatabase(uri, dbName = 'studymate') {
   await client.connect();
   db = client.db(dbName);
 
-  // Ensure unique index on users.email
+ 
   await db.collection('users').createIndex({ email: 1 }, { unique: true });
 
   console.log('✅ MongoDB connected:', db.databaseName);

@@ -1,7 +1,7 @@
-// src/controllers/authController.js
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getDB } = require('../config/db');
+const { ObjectId } = require('mongodb');
 
 const COLLECTION = 'users';
 
@@ -72,13 +72,16 @@ exports.login = async (req, res) => {
   }
 };
 
+// FIX: Removed the duplicate 'exports.getProfile' function that was here.
+// This is the correct version you had.
 exports.getProfile = async (req, res) => {
   try {
     const db = getDB();
     const users = db.collection(COLLECTION);
     const userId = req.userId; // set by middleware
 
-    const user = await users.findOne({ _id: require('mongodb').ObjectId(userId) }, { projection: { password: 0 } });
+    // This use of 'new ObjectId(userId)' is correct for mongodb v7+
+    const user = await users.findOne({ _id: new ObjectId(userId) }, { projection: { password: 0 } });
     if (!user) return res.status(404).json({ msg: 'User not found' });
 
     user.id = user._id.toString();
