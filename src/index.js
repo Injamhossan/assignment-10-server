@@ -5,9 +5,12 @@ const express = require('express');
 const cors = require('cors');
 const { connectToDatabase } = require('./config/db');
 
-
-console.log('MONGO_URI from env:', !!process.env.MONGO_URI); 
-
+// Check if MONGO_URI exists without exposing the actual URL
+if (!process.env.MONGO_URI) {
+  console.error('❌ MONGO_URI is not defined in .env');
+  process.exit(1);
+}
+console.log('✅ MONGO_URI loaded successfully (hidden for security)');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -15,15 +18,12 @@ const PORT = process.env.PORT || 5000;
 async function start() {
   try {
     console.log('Starting server bootstrap...');
-    if (!process.env.MONGO_URI) {
-      
-      throw new Error('MONGO_URI is not defined in .env');
-    }
     await connectToDatabase(process.env.MONGO_URI);
     app.use(cors());
     app.use(express.json());
 
     app.use('/api/auth', require('./routes/authRoutes'));
+    app.use('/api/partners', require('./routes/partnersRoutes'));
 
     app.get('/', (req, res) => res.send('API running'));
 
@@ -41,7 +41,7 @@ async function start() {
 
   } catch (err) {
     console.error('Failed to start server — fatal:');
-    console.error(err && err.stack ? err.stack : err);
+    console.error('Error:', err.message || err);
     process.exit(1);
   }
 }
