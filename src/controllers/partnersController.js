@@ -1,4 +1,5 @@
 const { getDB } = require('../config/db');
+const { ObjectId } = require('mongodb');
 
 const COLLECTION = 'partners';
 
@@ -55,6 +56,78 @@ exports.getAllPartners = async (req, res) => {
     return res.status(500).json({ 
       success: false,
       msg: 'Server error while fetching partners',
+      error: err.message 
+    });
+  }
+};
+
+// GET single partner by ID
+exports.getPartnerById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Validate ID format
+    if (!id || id.length !== 24) {
+      return res.status(400).json({ 
+        success: false,
+        msg: 'Invalid partner ID format' 
+      });
+    }
+    
+    const db = getDB();
+    const databaseName = db.databaseName;
+    const partners = db.collection(COLLECTION);
+    
+    console.log('🔍 Fetching partner by ID:');
+    console.log('   Database:', databaseName);
+    console.log('   Collection:', COLLECTION);
+    console.log('   ID:', id);
+    
+    // Convert string ID to ObjectId
+    let partner;
+    try {
+      partner = await partners.findOne({ _id: new ObjectId(id) });
+    } catch (objectIdError) {
+      return res.status(400).json({ 
+        success: false,
+        msg: 'Invalid partner ID format' 
+      });
+    }
+    
+    if (!partner) {
+      return res.status(404).json({ 
+        success: false,
+        msg: 'Partner not found' 
+      });
+    }
+    
+    // Format the partner data
+    const formattedPartner = {
+      _id: partner._id ? partner._id.toString() : '',
+      image: partner.image || '',
+      name: partner.name || '',
+      subject: partner.subject || '',
+      level: partner.level || '',
+      activeStatus: partner.activeStatus || 'Offline',
+      rating: typeof partner.rating === 'number' ? partner.rating : (parseFloat(partner.rating) || 0),
+      about: partner.about || '',
+      location: partner.location || '',
+      availability: partner.availability || '',
+      createdAt: partner.createdAt || null,
+      updatedAt: partner.updatedAt || null
+    };
+    
+    console.log('✅ Partner found:', formattedPartner.name);
+    
+    return res.status(200).json({ 
+      success: true,
+      data: formattedPartner 
+    });
+  } catch (err) {
+    console.error('Get partner by ID error:', err);
+    return res.status(500).json({ 
+      success: false,
+      msg: 'Server error while fetching partner',
       error: err.message 
     });
   }
