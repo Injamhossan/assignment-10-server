@@ -15,8 +15,8 @@ exports.register = async (req, res) => {
     const { name, email, password, firebaseToken } = req.body;
     
     // Validate required fields
-    if (!name || !email || !password) {
-      return res.status(400).json({ msg: 'Provide name, email and password' });
+    if (!name || !email) {
+      return res.status(400).json({ msg: 'Provide name and email' });
     }
 
     // Firebase token is required for registration
@@ -47,15 +47,23 @@ exports.register = async (req, res) => {
       return res.status(400).json({ msg: 'Email already registered in MongoDB' });
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashed = await bcrypt.hash(password, salt);
+    // Hash password ONLY if it's provided
+    let hashed;
+    if (password) {
+      // Email/Password registration
+      const salt = await bcrypt.genSalt(10);
+      hashed = await bcrypt.hash(password, salt);
+    } else {
+      // Google Sign In registration (no password)
+      // We can store a placeholder or 'null'. Using a placeholder.
+      hashed = 'social_login_placeholder_hash';
+    }
 
     // Create new user in MongoDB users collection
     const newUser = {
       name,
       email: email.toLowerCase(),
-      password: hashed,
+      password: hashed, // Hashed password ba placeholder
       firebaseUID: firebaseUser.uid, // Store Firebase UID for reference
       role: 'user',
       createdAt: new Date(),
@@ -88,8 +96,8 @@ exports.login = async (req, res) => {
     const { email, password, firebaseToken } = req.body;
     
     // Validate required fields
-    if (!email || !password) {
-      return res.status(400).json({ msg: 'Provide email and password' });
+    if (!email) {
+      return res.status(400).json({ msg: 'Provide email' });
     }
 
     // Firebase token is required for login
@@ -124,11 +132,16 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Verify password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ msg: 'Invalid credentials' });
+    // Verify password ONLY if it's provided
+    if (password) {
+      // This is an Email/Password login
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res.status(400).json({ msg: 'Invalid credentials' });
+      }
     }
+    // If no password is provided (Google Sign In), we skip password check
+    // because the firebaseToken verification is enough.
 
     // Verify Firebase UID matches (if stored)
     if (user.firebaseUID && user.firebaseUID !== firebaseUser.uid) {
@@ -150,8 +163,6 @@ exports.login = async (req, res) => {
   }
 };
 
-// FIX: Removed the duplicate 'exports.getProfile' function that was here.
-// This is the correct version you had.
 exports.getProfile = async (req, res) => {
   try {
     const db = getDB();
@@ -167,6 +178,63 @@ exports.getProfile = async (req, res) => {
     return res.json({ user });
   } catch (err) {
     console.error('GetProfile error:', err);
+    return res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+exports.updateProfile = async (req, res) => {
+  try {
+    const { name, password, bio, location, phone } = req.body;
+    const userId = req.userId; // authMiddleware theke ashche
+
+    const db = getDB();
+    const users = db.collection(COLLECTION);
+
+    // Kon field gulo update kora hobe shegulo toiri kori
+    const updatedFields = {
+      updatedAt: new Date()
+    };
+
+    if (name) updatedFields.name = name;
+    if (bio) updatedFields.bio = bio;
+    if (location) updatedFields.location = location;
+    if (phone) updatedFields.phone = phone;
+
+    // Jodi notun password deya hoy, tobe hash kore update korte hobe
+    if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({ msg: 'Password must be at least 6 characters' });
+      }
+      const salt = await bcrypt.genSalt(10);
+      updatedFields.password = await bcrypt.hash(password, salt);
+    }
+
+    // Database e update operation chalai
+    const result = await users.findOneAndUpdate(
+      { _id: new ObjectId(userId) },
+      { $set: updatedFields },
+      { 
+        returnDocument: 'after', // Update korar *porer* document-ti return korbe
+        projection: { password: 0 } // Password baad diye data return korbe
+      }
+    );
+
+    if (!result) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+
+    // result object-e ekhon notun user data ache
+    const updatedUser = result;
+    updatedUser.id = updatedUser._id.toString(); // ID format thik kora
+    delete updatedUser._id;
+
+    return res.status(200).json({ 
+      user: updatedUser, 
+      msg: 'Profile updated successfully' 
+    });
+
+  } catch (err) {
+    console.error('UpdateProfile error:', err);
     return res.status(500).json({ msg: 'Server error' });
   }
 };
