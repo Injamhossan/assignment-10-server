@@ -66,6 +66,9 @@ exports.register = async (req, res) => {
       password: hashed, // Hashed password ba placeholder
       firebaseUID: firebaseUser.uid, // Store Firebase UID for reference
       role: 'user',
+      sentRequests: [], // --- NOTUN FIELD ---
+      receivedRequests: [], // --- NOTUN FIELD ---
+      connections: [], // --- NOTUN FIELD ---
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -76,7 +79,8 @@ exports.register = async (req, res) => {
       id: result.insertedId.toString(), 
       name: newUser.name, 
       email: newUser.email,
-      firebaseUID: newUser.firebaseUID
+      firebaseUID: newUser.firebaseUID,
+      sentRequests: newUser.sentRequests // --- NOTUN FIELD ---
     };
     const token = createToken({ userId: userSafe.id });
 
@@ -152,7 +156,8 @@ exports.login = async (req, res) => {
       id: user._id.toString(), 
       name: user.name, 
       email: user.email,
-      role: user.role || 'user'
+      role: user.role || 'user',
+      sentRequests: user.sentRequests || [] // --- PORIBORTON ---
     };
     const token = createToken({ userId: userSafe.id });
 
@@ -169,8 +174,14 @@ exports.getProfile = async (req, res) => {
     const users = db.collection(COLLECTION);
     const userId = req.userId; // set by middleware
 
-    // This use of 'new ObjectId(userId)' is correct for mongodb v7+
-    const user = await users.findOne({ _id: new ObjectId(userId) }, { projection: { password: 0 } });
+    // --- PORIBORTON ---
+    // 'sentRequests' field-ti o client-e pathano hocche
+    const user = await users.findOne(
+      { _id: new ObjectId(userId) }, 
+      { projection: { password: 0 } } // password chara shob pathano hocche
+    );
+    // --- PORIBORTON (END) ---
+
     if (!user) return res.status(404).json({ msg: 'User not found' });
 
     user.id = user._id.toString();
@@ -184,7 +195,7 @@ exports.getProfile = async (req, res) => {
 
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, password, bio, location, phone } = req.body;
+    const { name, password, bio, location, phone, photoURL, interests, education } = req.body;
     const userId = req.userId; // authMiddleware theke ashche
 
     const db = getDB();
@@ -199,6 +210,10 @@ exports.updateProfile = async (req, res) => {
     if (bio) updatedFields.bio = bio;
     if (location) updatedFields.location = location;
     if (phone) updatedFields.phone = phone;
+    if (photoURL) updatedFields.photoURL = photoURL;
+    if (interests) updatedFields.interests = interests;
+    if (education) updatedFields.education = education;
+
 
     // Jodi notun password deya hoy, tobe hash kore update korte hobe
     if (password) {
@@ -238,3 +253,121 @@ exports.updateProfile = async (req, res) => {
     return res.status(500).json({ msg: 'Server error' });
   }
 };
+
+exports.deleteProfile = async (req, res) => {
+  try {
+    const userId = req.userId; // authMiddleware theke ashche
+
+    const db = getDB();
+    const users = db.collection(COLLECTION);
+    const partners = db.collection('partners'); // partners collection o access korchi
+
+    // Step 1: User-ke 'users' collection theke khuje ber kori tar email janar jonno
+    const user = await users.findOne({ _id: new ObjectId(userId) });
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
+    }
+    
+    const userEmail = user.email;
+
+    // Step 2: User-ke 'users' collection theke delete kori
+    await users.deleteOne({ _id: new ObjectId(userId) });
+
+    // Step 3: User-er 'partners' profile-takeo (jodi thake) 'partners' collection theke delete kori
+    // Amra email use kore partner profile-ti find korbo
+    if (userEmail) {
+      await partners.deleteOne({ email: userEmail });
+    }
+    
+    // (Bhabishyoter jonno): Onnano user-der 'sentRequests', 'receivedRequests', 'connections' array thekeo ei user ID remove kora uchit.
+
+    return res.status(200).json({ 
+      msg: 'User and associated partner profile deleted successfully' 
+    });
+
+  } catch (err)
+ {
+    console.error('DeleteProfile error:', err);
+    return res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+
+// --- NOTUN FUNCTION (START) ---
+/**
+ * Ekti partner-ke connection request pathay
+ */
+exports.sendRequest = async (req, res) => {
+  try {
+    const { partnerId } = req.params; // Jake request pathano hocche (Partner-er _id)
+    const userId = req.userId; // Je request pathacche (Logged in user-er _id)
+
+    if (!partnerId || partnerId.length !== 24) {
+      return res.status(400).json({ msg: 'Invalid Partner ID' });
+    }
+    
+    if (partnerId === userId) {
+      return res.status(400).json({ msg: 'You cannot send a request to yourself' });
+    }
+
+    const db = getDB();
+    const users = db.collection(COLLECTION);
+
+    // Step 1: Logged in user-er 'sentRequests' array-te partnerId add kora
+    const updateSender = await users.updateOne(
+      { _id: new ObjectId(userId) },
+      { $addToSet: { sentRequests: new ObjectId(partnerId) } } // $addToSet duplicate entry bondho kore
+    );
+
+    // Step 2 (Optional, but recommended): Partner-er 'receivedRequests' array-te userId add kora
+    // Kintu partner-der data 'partners' collection-e thakle, amader shekhan-e update korte hobe.
+    // Eikhane ধরে নিচ্ছি 'partners' ebong 'users' alada ebong request shudhu 'users' ei track korchi.
+    // Simplification: Shudhu sender-er array update korchi.
+
+    if (updateSender.modifiedCount === 0) {
+      // Hoy user pawa jayni, othoba request agei pathano chilo
+      const user = await users.findOne({ _id: new ObjectId(userId) });
+      if (user.sentRequests.some(id => id.equals(new ObjectId(partnerId)))) {
+        return res.status(200).json({ msg: 'Request already sent' });
+      }
+    }
+
+    return res.status(200).json({ msg: 'Request sent successfully' });
+
+  } catch (err) {
+    console.error('SendRequest error:', err);
+    return res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+/**
+ * Pathano connection request cancel kore
+ */
+exports.cancelRequest = async (req, res) => {
+  try {
+    const { partnerId } = req.params; // Jar kach theke request cancel kora hocche
+    const userId = req.userId; // Je cancel korche (Logged in user)
+
+    if (!partnerId || partnerId.length !== 24) {
+      return res.status(400).json({ msg: 'Invalid Partner ID' });
+    }
+
+    const db = getDB();
+    const users = db.collection(COLLECTION);
+
+    // Step 1: Logged in user-er 'sentRequests' array theke partnerId remove kora
+    await users.updateOne(
+      { _id: new ObjectId(userId) },
+      { $pull: { sentRequests: new ObjectId(partnerId) } } // $pull array theke remove kore
+    );
+    
+    // Step 2 (Optional): Partner-er 'receivedRequests' array theke userId remove kora
+
+    return res.status(200).json({ msg: 'Request cancelled successfully' });
+
+  } catch (err) {
+    console.error('CancelRequest error:', err);
+    return res.status(500).json({ msg: 'Server error' });
+  }
+};
+// --- NOTUN FUNCTION (END) ---
