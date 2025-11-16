@@ -1,21 +1,30 @@
 const admin = require('firebase-admin');
-const path = require('path');
-
-// Initialize Firebase Admin SDK
 try {
-  const serviceAccountPath = path.resolve(__dirname, '../../study-mate-firebase-adminsdk.json');
+  
+  const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+
+  if (!serviceAccountBase64) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_BASE64 environment variable is not set.');
+  }
+
+  
+  const serviceAccountJson = Buffer.from(serviceAccountBase64, 'base64').toString('utf8');
+
+  
+  const serviceAccount = JSON.parse(serviceAccountJson);
   
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccountPath)
+   
+    credential: admin.credential.cert(serviceAccount)
   });
   
-  console.log('✅ Firebase Admin SDK initialized successfully');
+  console.log('Firebase Admin SDK initialized successfully from env');
 } catch (error) {
-  console.error('❌ Firebase Admin SDK initialization failed:', error.message);
+  console.error('Firebase Admin SDK initialization failed:', error.message);
   throw error;
 }
 
-// Verify Firebase ID Token
+
 async function verifyFirebaseToken(idToken) {
   try {
     const decodedToken = await admin.auth().verifyIdToken(idToken);
@@ -26,7 +35,7 @@ async function verifyFirebaseToken(idToken) {
   }
 }
 
-// Get user from Firebase by UID
+
 async function getFirebaseUser(uid) {
   try {
     const userRecord = await admin.auth().getUser(uid);
@@ -42,4 +51,3 @@ module.exports = {
   verifyFirebaseToken,
   getFirebaseUser
 };
-

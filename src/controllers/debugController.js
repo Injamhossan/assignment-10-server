@@ -1,16 +1,12 @@
 const { getDB } = require('../config/db');
 
-// Debug endpoint - Get database info
 exports.getDatabaseInfo = async (req, res) => {
   try {
     const db = getDB();
     const databaseName = db.databaseName;
-    
-    // List all collections
+
     const collections = await db.listCollections().toArray();
     const collectionNames = collections.map(c => c.name);
-    
-    // Get document counts for each collection
     const collectionInfo = await Promise.all(
       collectionNames.map(async (name) => {
         try {

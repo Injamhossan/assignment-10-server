@@ -11,9 +11,9 @@ exports.getAllPartners = async (req, res) => {
     const partners = db.collection(COLLECTION);
     
     // Debug: Log database and collection info
-    console.log('📊 Fetching partners from:');
-    console.log('   Database:', databaseName);
-    console.log('   Collection:', COLLECTION);
+    console.log('Fetching partners from:');
+    console.log('Database:', databaseName);
+    console.log('Collection:', COLLECTION);
     
     // Get total count for debugging
     const totalCount = await partners.countDocuments({});
@@ -22,16 +22,16 @@ exports.getAllPartners = async (req, res) => {
     const allPartners = await partners.find({}).toArray();
     console.log('   Documents fetched:', allPartners.length);
     
-    // If no data, list all collections in database
     if (allPartners.length === 0) {
       const collections = await db.listCollections().toArray();
       const collectionNames = collections.map(c => c.name);
       console.log('⚠️  No partners found. Available collections:', collectionNames);
     }
     
-    // Convert _id to string for JSON response
     const formattedPartners = allPartners.map(partner => ({
       _id: partner._id ? partner._id.toString() : '',
+
+      email: partner.email || '', 
       image: partner.image || '',
       name: partner.name || '',
       subject: partner.subject || '',
@@ -40,7 +40,8 @@ exports.getAllPartners = async (req, res) => {
       rating: typeof partner.rating === 'number' ? partner.rating : (parseFloat(partner.rating) || 0),
       about: partner.about || '',
       location: partner.location || '',
-      availability: partner.availability || ''
+      availability: partner.availability || '',
+      requestCount: typeof partner.requestCount === 'number' ? partner.requestCount : 0
     }));
     
     return res.status(200).json({ 
@@ -61,7 +62,7 @@ exports.getAllPartners = async (req, res) => {
   }
 };
 
-// GET single partner by ID
+
 exports.getPartnerById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -78,7 +79,7 @@ exports.getPartnerById = async (req, res) => {
     const databaseName = db.databaseName;
     const partners = db.collection(COLLECTION);
     
-    console.log('🔍 Fetching partner by ID:');
+    console.log(' Fetching partner by ID:');
     console.log('   Database:', databaseName);
     console.log('   Collection:', COLLECTION);
     console.log('   ID:', id);
@@ -104,6 +105,7 @@ exports.getPartnerById = async (req, res) => {
     // Format the partner data
     const formattedPartner = {
       _id: partner._id ? partner._id.toString() : '',
+      email: partner.email || '', 
       image: partner.image || '',
       name: partner.name || '',
       subject: partner.subject || '',
@@ -113,6 +115,7 @@ exports.getPartnerById = async (req, res) => {
       about: partner.about || '',
       location: partner.location || '',
       availability: partner.availability || '',
+      requestCount: typeof partner.requestCount === 'number' ? partner.requestCount : 0,
       createdAt: partner.createdAt || null,
       updatedAt: partner.updatedAt || null
     };
@@ -136,19 +139,29 @@ exports.getPartnerById = async (req, res) => {
 // POST - Create a new partner
 exports.createPartner = async (req, res) => {
   try {
-    const { image, name, subject, level, activeStatus, rating, about, location, availability } = req.body;
+
+    const { email, image, name, subject, level, activeStatus, rating, about, location, availability } = req.body;
     
     // Validate required fields
-    if (!name || !subject || !level) {
+    if (!email || !name || !subject || !level) {
       return res.status(400).json({ 
         success: false,
-        msg: 'Please provide name, subject, and level' 
+        msg: 'Please provide email, name, subject, and level' 
       });
     }
     
     const db = getDB();
     const databaseName = db.databaseName;
     const partners = db.collection(COLLECTION);
+
+    // Check if partner profile already exists for this email
+    const existingPartner = await partners.findOne({ email: email.toLowerCase() });
+    if (existingPartner) {
+      return res.status(400).json({ 
+        success: false,
+        msg: 'A partner profile already exists for this email'
+      });
+    }
     
     console.log('📝 Creating partner in:');
     console.log('   Database:', databaseName);
@@ -156,6 +169,7 @@ exports.createPartner = async (req, res) => {
     
     // Create new partner object
     const newPartner = {
+      email: email.toLowerCase(), 
       image: image || '',
       name: name.trim(),
       subject: subject.trim(),
@@ -194,3 +208,64 @@ exports.createPartner = async (req, res) => {
   }
 };
 
+exports.updatePartner = async (req, res) => {
+  try {
+    const { id } = req.params; 
+    const userId = req.userId; 
+    const { image, name, subject, level, activeStatus, about, location, availability } = req.body;
+
+    if (!id || id.length !== 24) {
+      return res.status(400).json({ success: false, msg: 'Invalid partner ID' });
+    }
+    
+    const db = getDB();
+    const partners = db.collection(COLLECTION);
+    const users = db.collection('users'); 
+    const loggedInUser = await users.findOne({ _id: new ObjectId(userId) });
+    if (!loggedInUser) {
+      return res.status(404).json({ success: false, msg: 'User not found' });
+    }
+
+  
+    const partnerToUpdate = await partners.findOne({ _id: new ObjectId(id) });
+    if (!partnerToUpdate) {
+      return res.status(404).json({ success: false, msg: 'Partner profile not found' });
+    }
+    if (partnerToUpdate.email !== loggedInUser.email) {
+      return res.status(403).json({ success: false, msg: 'Authorization denied' });
+    }
+
+
+    const updatedFields = {
+      updatedAt: new Date()
+    };
+    if (name) updatedFields.name = name.trim();
+    if (image !== undefined) updatedFields.image = image;
+    if (subject) updatedFields.subject = subject.trim();
+    if (level) updatedFields.level = level.trim();
+    if (activeStatus) updatedFields.activeStatus = activeStatus;
+    if (about !== undefined) updatedFields.about = about;
+    if (location) updatedFields.location = location;
+    if (availability) updatedFields.availability = availability;
+
+    // Perform the update
+    const result = await partners.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $set: updatedFields },
+      { returnDocument: 'after' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      msg: 'Partner profile updated successfully',
+      data: result
+    });
+
+  } catch (err) {
+    console.error('Update partner error:', err);
+    return res.status(500).json({ 
+      success: false,
+      msg: 'Server error while updating partner' 
+    });
+  }
+};

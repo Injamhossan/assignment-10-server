@@ -1,6 +1,3 @@
-// User model schema definition
-// This is a reference schema. Actual data is stored in MongoDB 'users' collection
-
 const UserSchema = {
   name: {
     type: String,

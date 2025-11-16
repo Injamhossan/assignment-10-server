@@ -1,8 +1,6 @@
-// src/middlewares/authMiddleware.js
 const jwt = require('jsonwebtoken');
 
 module.exports = (req, res, next) => {
-  // token can be in header Authorization: Bearer <token>
   const authHeader = req.headers['authorization'] || req.headers['Authorization'];
   if (!authHeader) return res.status(401).json({ msg: 'No token, authorization denied' });
 

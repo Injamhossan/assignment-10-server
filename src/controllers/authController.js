@@ -14,17 +14,16 @@ exports.register = async (req, res) => {
   try {
     const { name, email, password, firebaseToken } = req.body;
     
-    // Validate required fields
     if (!name || !email) {
       return res.status(400).json({ msg: 'Provide name and email' });
     }
 
-    // Firebase token is required for registration
+ 
     if (!firebaseToken) {
       return res.status(400).json({ msg: 'Firebase token is required for registration' });
     }
 
-    // Verify Firebase token
+  
     let firebaseUser;
     try {
       const decodedToken = await verifyFirebaseToken(firebaseToken);
@@ -33,7 +32,7 @@ exports.register = async (req, res) => {
       return res.status(401).json({ msg: 'Invalid Firebase token. User must be registered in Firebase first.' });
     }
 
-    // Check if Firebase user email matches the provided email
+   
     if (firebaseUser.email !== email.toLowerCase()) {
       return res.status(400).json({ msg: 'Email does not match Firebase account' });
     }
@@ -41,34 +40,33 @@ exports.register = async (req, res) => {
     const db = getDB();
     const users = db.collection(COLLECTION);
 
-    // Check if user already exists in MongoDB
+    
     const existing = await users.findOne({ email: email.toLowerCase() });
     if (existing) {
       return res.status(400).json({ msg: 'Email already registered in MongoDB' });
     }
 
-    // Hash password ONLY if it's provided
+   
     let hashed;
     if (password) {
-      // Email/Password registration
+     
       const salt = await bcrypt.genSalt(10);
       hashed = await bcrypt.hash(password, salt);
     } else {
-      // Google Sign In registration (no password)
-      // We can store a placeholder or 'null'. Using a placeholder.
+      
       hashed = 'social_login_placeholder_hash';
     }
 
-    // Create new user in MongoDB users collection
+    
     const newUser = {
       name,
       email: email.toLowerCase(),
-      password: hashed, // Hashed password ba placeholder
-      firebaseUID: firebaseUser.uid, // Store Firebase UID for reference
+      password: hashed, 
+      firebaseUID: firebaseUser.uid, 
       role: 'user',
-      sentRequests: [], // --- NOTUN FIELD ---
-      receivedRequests: [], // --- NOTUN FIELD ---
-      connections: [], // --- NOTUN FIELD ---
+      sentRequests: [], 
+      receivedRequests: [], 
+      connections: [], 
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -80,7 +78,7 @@ exports.register = async (req, res) => {
       name: newUser.name, 
       email: newUser.email,
       firebaseUID: newUser.firebaseUID,
-      sentRequests: newUser.sentRequests // --- NOTUN FIELD ---
+      sentRequests: newUser.sentRequests 
     };
     const token = createToken({ userId: userSafe.id });
 
@@ -99,17 +97,15 @@ exports.login = async (req, res) => {
   try {
     const { email, password, firebaseToken } = req.body;
     
-    // Validate required fields
     if (!email) {
       return res.status(400).json({ msg: 'Provide email' });
     }
 
-    // Firebase token is required for login
     if (!firebaseToken) {
       return res.status(400).json({ msg: 'Firebase token is required for login' });
     }
 
-    // Verify Firebase token first
+
     let firebaseUser;
     try {
       const decodedToken = await verifyFirebaseToken(firebaseToken);
@@ -118,7 +114,7 @@ exports.login = async (req, res) => {
       return res.status(401).json({ msg: 'Invalid Firebase token. User must be registered in Firebase first.' });
     }
 
-    // Check if Firebase user email matches the provided email
+
     if (firebaseUser.email !== email.toLowerCase()) {
       return res.status(400).json({ msg: 'Email does not match Firebase account' });
     }
@@ -126,28 +122,24 @@ exports.login = async (req, res) => {
     const db = getDB();
     const users = db.collection(COLLECTION);
 
-    // Load user from MongoDB users collection
+
     const user = await users.findOne({ email: email.toLowerCase() });
-    
-    // If user doesn't exist in MongoDB, they need to register first
+
     if (!user) {
       return res.status(404).json({ 
         msg: 'User not found. Please register first. User must exist in MongoDB users collection.' 
       });
     }
 
-    // Verify password ONLY if it's provided
+  
     if (password) {
-      // This is an Email/Password login
+
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
         return res.status(400).json({ msg: 'Invalid credentials' });
       }
     }
-    // If no password is provided (Google Sign In), we skip password check
-    // because the firebaseToken verification is enough.
-
-    // Verify Firebase UID matches (if stored)
+  
     if (user.firebaseUID && user.firebaseUID !== firebaseUser.uid) {
       return res.status(400).json({ msg: 'Firebase UID mismatch' });
     }
@@ -157,7 +149,7 @@ exports.login = async (req, res) => {
       name: user.name, 
       email: user.email,
       role: user.role || 'user',
-      sentRequests: user.sentRequests || [] // --- PORIBORTON ---
+      sentRequests: user.sentRequests || [] 
     };
     const token = createToken({ userId: userSafe.id });
 
@@ -172,15 +164,13 @@ exports.getProfile = async (req, res) => {
   try {
     const db = getDB();
     const users = db.collection(COLLECTION);
-    const userId = req.userId; // set by middleware
+    const userId = req.userId; 
 
-    // --- PORIBORTON ---
-    // 'sentRequests' field-ti o client-e pathano hocche
+    
     const user = await users.findOne(
       { _id: new ObjectId(userId) }, 
-      { projection: { password: 0 } } // password chara shob pathano hocche
+      { projection: { password: 0 } } 
     );
-    // --- PORIBORTON (END) ---
 
     if (!user) return res.status(404).json({ msg: 'User not found' });
 
@@ -196,12 +186,11 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
   try {
     const { name, password, bio, location, phone, photoURL, interests, education } = req.body;
-    const userId = req.userId; // authMiddleware theke ashche
-
+    const userId = req.userId; 
     const db = getDB();
     const users = db.collection(COLLECTION);
 
-    // Kon field gulo update kora hobe shegulo toiri kori
+   
     const updatedFields = {
       updatedAt: new Date()
     };
@@ -215,7 +204,7 @@ exports.updateProfile = async (req, res) => {
     if (education) updatedFields.education = education;
 
 
-    // Jodi notun password deya hoy, tobe hash kore update korte hobe
+    
     if (password) {
       if (password.length < 6) {
         return res.status(400).json({ msg: 'Password must be at least 6 characters' });
@@ -229,8 +218,8 @@ exports.updateProfile = async (req, res) => {
       { _id: new ObjectId(userId) },
       { $set: updatedFields },
       { 
-        returnDocument: 'after', // Update korar *porer* document-ti return korbe
-        projection: { password: 0 } // Password baad diye data return korbe
+        returnDocument: 'after', 
+        projection: { password: 0 } 
       }
     );
 
@@ -240,7 +229,7 @@ exports.updateProfile = async (req, res) => {
 
     // result object-e ekhon notun user data ache
     const updatedUser = result;
-    updatedUser.id = updatedUser._id.toString(); // ID format thik kora
+    updatedUser.id = updatedUser._id.toString(); 
     delete updatedUser._id;
 
     return res.status(200).json({ 
@@ -256,13 +245,10 @@ exports.updateProfile = async (req, res) => {
 
 exports.deleteProfile = async (req, res) => {
   try {
-    const userId = req.userId; // authMiddleware theke ashche
-
+    const userId = req.userId; 
     const db = getDB();
     const users = db.collection(COLLECTION);
-    const partners = db.collection('partners'); // partners collection o access korchi
-
-    // Step 1: User-ke 'users' collection theke khuje ber kori tar email janar jonno
+    const partners = db.collection('partners'); 
     const user = await users.findOne({ _id: new ObjectId(userId) });
     if (!user) {
       return res.status(404).json({ msg: 'User not found' });
@@ -270,16 +256,11 @@ exports.deleteProfile = async (req, res) => {
     
     const userEmail = user.email;
 
-    // Step 2: User-ke 'users' collection theke delete kori
     await users.deleteOne({ _id: new ObjectId(userId) });
 
-    // Step 3: User-er 'partners' profile-takeo (jodi thake) 'partners' collection theke delete kori
-    // Amra email use kore partner profile-ti find korbo
     if (userEmail) {
       await partners.deleteOne({ email: userEmail });
     }
-    
-    // (Bhabishyoter jonno): Onnano user-der 'sentRequests', 'receivedRequests', 'connections' array thekeo ei user ID remove kora uchit.
 
     return res.status(200).json({ 
       msg: 'User and associated partner profile deleted successfully' 
@@ -292,15 +273,10 @@ exports.deleteProfile = async (req, res) => {
   }
 };
 
-
-// --- NOTUN FUNCTION (START) ---
-/**
- * Ekti partner-ke connection request pathay
- */
 exports.sendRequest = async (req, res) => {
   try {
-    const { partnerId } = req.params; // Jake request pathano hocche (Partner-er _id)
-    const userId = req.userId; // Je request pathacche (Logged in user-er _id)
+    const { partnerId } = req.params; 
+    const userId = req.userId; 
 
     if (!partnerId || partnerId.length !== 24) {
       return res.status(400).json({ msg: 'Invalid Partner ID' });
@@ -312,27 +288,106 @@ exports.sendRequest = async (req, res) => {
 
     const db = getDB();
     const users = db.collection(COLLECTION);
+    const partners = db.collection('partners');
+    const requests = db.collection('requests');
 
-    // Step 1: Logged in user-er 'sentRequests' array-te partnerId add kora
-    const updateSender = await users.updateOne(
-      { _id: new ObjectId(userId) },
-      { $addToSet: { sentRequests: new ObjectId(partnerId) } } // $addToSet duplicate entry bondho kore
-    );
 
-    // Step 2 (Optional, but recommended): Partner-er 'receivedRequests' array-te userId add kora
-    // Kintu partner-der data 'partners' collection-e thakle, amader shekhan-e update korte hobe.
-    // Eikhane ধরে নিচ্ছি 'partners' ebong 'users' alada ebong request shudhu 'users' ei track korchi.
-    // Simplification: Shudhu sender-er array update korchi.
-
-    if (updateSender.modifiedCount === 0) {
-      // Hoy user pawa jayni, othoba request agei pathano chilo
-      const user = await users.findOne({ _id: new ObjectId(userId) });
-      if (user.sentRequests.some(id => id.equals(new ObjectId(partnerId)))) {
-        return res.status(200).json({ msg: 'Request already sent' });
-      }
+    // Check if request already sent in user's sentRequests array
+    const user = await users.findOne({ _id: new ObjectId(userId) });
+    if (!user) {
+      return res.status(404).json({ msg: 'User not found' });
     }
 
-    return res.status(200).json({ msg: 'Request sent successfully' });
+    // First, try to find partner by ID in partners collection
+    let partner = await partners.findOne({ _id: new ObjectId(partnerId) });
+    let partnerUser;
+    let receiverUserId;
+
+    if (partner && partner.email) {
+      // Partner found, get user by email
+      partnerUser = await users.findOne({ email: partner.email });
+      if (partnerUser) {
+        receiverUserId = partnerUser._id.toString();
+      } else {
+        // Partner profile exists but user not found by email
+        // Try to find user directly by ID (for demo users or edge cases)
+        partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
+        if (!partnerUser) {
+          return res.status(404).json({ msg: 'Partner user not found for this partner profile' });
+        }
+        receiverUserId = partnerId;
+      }
+    } else {
+      // Partner not found in partners collection, try to find user directly by ID
+      // This handles demo users and cases where partnerId is actually a user ID
+      partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
+      if (!partnerUser) {
+        return res.status(404).json({ msg: 'Partner user not found' });
+      }
+      receiverUserId = partnerId;
+    }
+
+    // Check if request already sent
+    if (user.sentRequests && user.sentRequests.some(id => id.toString() === receiverUserId)) {
+      return res.status(200).json({ msg: 'Request already sent' });
+    }
+
+    // Check if request already exists in requests collection
+    const existingRequest = await requests.findOne({
+      senderId: new ObjectId(userId),
+      receiverId: new ObjectId(receiverUserId)
+    });
+
+    if (existingRequest) {
+      return res.status(200).json({ msg: 'Request already sent' });
+    }
+
+    // Create request document in requests collection
+    const requestDocument = {
+      senderId: new ObjectId(userId),
+      receiverId: new ObjectId(receiverUserId),
+      senderName: user.name || '',
+      receiverName: partnerUser.name || '',
+      status: 'pending', // pending, accepted, rejected, cancelled
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const requestResult = await requests.insertOne(requestDocument);
+
+    // Update sender's sentRequests array
+    await users.updateOne(
+      { _id: new ObjectId(userId) },
+      { $addToSet: { sentRequests: new ObjectId(receiverUserId) } } 
+    );
+
+    // Update receiver's receivedRequests array
+    await users.updateOne(
+      { _id: new ObjectId(receiverUserId) },
+      { $addToSet: { receivedRequests: new ObjectId(userId) } } 
+    );
+
+    // Increment partner request count using $inc operator
+    if (partnerUser.email) {
+      await partners.updateOne(
+        { email: partnerUser.email },
+        { 
+          $inc: { requestCount: 1 },
+          $setOnInsert: {
+            email: partnerUser.email,
+            name: partnerUser.name || '',
+            createdAt: new Date(),
+            updatedAt: new Date()
+          }
+        },
+        { upsert: true }
+      );
+    }
+
+    return res.status(200).json({ 
+      msg: 'Request sent successfully',
+      requestId: requestResult.insertedId.toString()
+    });
 
   } catch (err) {
     console.error('SendRequest error:', err);
@@ -340,13 +395,10 @@ exports.sendRequest = async (req, res) => {
   }
 };
 
-/**
- * Pathano connection request cancel kore
- */
 exports.cancelRequest = async (req, res) => {
   try {
-    const { partnerId } = req.params; // Jar kach theke request cancel kora hocche
-    const userId = req.userId; // Je cancel korche (Logged in user)
+    const { partnerId } = req.params; 
+    const userId = req.userId;
 
     if (!partnerId || partnerId.length !== 24) {
       return res.status(400).json({ msg: 'Invalid Partner ID' });
@@ -354,14 +406,67 @@ exports.cancelRequest = async (req, res) => {
 
     const db = getDB();
     const users = db.collection(COLLECTION);
+    const partners = db.collection('partners');
+    const requests = db.collection('requests');
 
-    // Step 1: Logged in user-er 'sentRequests' array theke partnerId remove kora
+    // First, try to find partner by ID in partners collection
+    let partner = await partners.findOne({ _id: new ObjectId(partnerId) });
+    let partnerUser;
+    let receiverUserId;
+
+    if (partner && partner.email) {
+      // Partner found, get user by email
+      partnerUser = await users.findOne({ email: partner.email });
+      if (partnerUser) {
+        receiverUserId = partnerUser._id.toString();
+      } else {
+        // Partner profile exists but user not found by email
+        // Try to find user directly by ID (for demo users or edge cases)
+        partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
+        if (!partnerUser) {
+          return res.status(404).json({ msg: 'Partner user not found for this partner profile' });
+        }
+        receiverUserId = partnerId;
+      }
+    } else {
+      // Partner not found in partners collection, try to find user directly by ID
+      // This handles demo users and cases where partnerId is actually a user ID
+      partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
+      if (!partnerUser) {
+        return res.status(404).json({ msg: 'Partner user not found' });
+      }
+      receiverUserId = partnerId;
+    }
+    
+    // Delete request from requests collection
+    const deleteResult = await requests.deleteOne({
+      senderId: new ObjectId(userId),
+      receiverId: new ObjectId(receiverUserId)
+    });
+
+    if (deleteResult.deletedCount === 0) {
+      return res.status(404).json({ msg: 'Request not found' });
+    }
+    
+    // Remove request from sender's sentRequests array
     await users.updateOne(
       { _id: new ObjectId(userId) },
-      { $pull: { sentRequests: new ObjectId(partnerId) } } // $pull array theke remove kore
+      { $pull: { sentRequests: new ObjectId(receiverUserId) } } 
+    );
+
+    // Remove request from receiver's receivedRequests array
+    await users.updateOne(
+      { _id: new ObjectId(receiverUserId) },
+      { $pull: { receivedRequests: new ObjectId(userId) } } 
     );
     
-    // Step 2 (Optional): Partner-er 'receivedRequests' array theke userId remove kora
+    // Decrement partner request count using $inc operator
+    if (partnerUser && partnerUser.email) {
+      await partners.updateOne(
+        { email: partnerUser.email },
+        { $inc: { requestCount: -1 } }
+      );
+    }
 
     return res.status(200).json({ msg: 'Request cancelled successfully' });
 
@@ -370,4 +475,87 @@ exports.cancelRequest = async (req, res) => {
     return res.status(500).json({ msg: 'Server error' });
   }
 };
-// --- NOTUN FUNCTION (END) ---
+
+// GET - Get all requests (sent and received)
+exports.getRequests = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { type } = req.query; // 'sent', 'received', or 'all' (default)
+
+    if (!userId) {
+      return res.status(401).json({ msg: 'Unauthorized' });
+    }
+
+    const db = getDB();
+    const requests = db.collection('requests');
+    const users = db.collection(COLLECTION);
+
+    let query = {};
+    
+    // Filter based on type
+    if (type === 'sent') {
+      query = { senderId: new ObjectId(userId) };
+    } else if (type === 'received') {
+      query = { receiverId: new ObjectId(userId) };
+    } else {
+      // Get both sent and received requests
+      query = {
+        $or: [
+          { senderId: new ObjectId(userId) },
+          { receiverId: new ObjectId(userId) }
+        ]
+      };
+    }
+
+    // Fetch requests from database
+    const allRequests = await requests.find(query).sort({ createdAt: -1 }).toArray();
+
+    // Format the requests with user details
+    const formattedRequests = await Promise.all(
+      allRequests.map(async (request) => {
+        // Get sender details
+        const sender = await users.findOne(
+          { _id: request.senderId },
+          { projection: { name: 1, email: 1, _id: 1 } }
+        );
+
+        // Get receiver details
+        const receiver = await users.findOne(
+          { _id: request.receiverId },
+          { projection: { name: 1, email: 1, _id: 1 } }
+        );
+
+        return {
+          _id: request._id.toString(),
+          requestId: request._id.toString(),
+          senderId: request.senderId.toString(),
+          receiverId: request.receiverId.toString(),
+          senderName: sender?.name || request.senderName || '',
+          receiverName: receiver?.name || request.receiverName || '',
+          senderEmail: sender?.email || '',
+          receiverEmail: receiver?.email || '',
+          status: request.status || 'pending',
+          createdAt: request.createdAt,
+          updatedAt: request.updatedAt,
+          isSentByMe: request.senderId.toString() === userId,
+          isReceivedByMe: request.receiverId.toString() === userId
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: formattedRequests.length,
+      type: type || 'all',
+      data: formattedRequests
+    });
+
+  } catch (err) {
+    console.error('GetRequests error:', err);
+    return res.status(500).json({ 
+      success: false,
+      msg: 'Server error while fetching requests',
+      error: err.message 
+    });
+  }
+};
