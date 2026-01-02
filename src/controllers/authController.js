@@ -1,561 +1,297 @@
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const { getDB } = require('../config/db');
 const { ObjectId } = require('mongodb');
-const { verifyFirebaseToken, getFirebaseUser } = require('../config/firebase');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { verifyFirebaseToken } = require('../config/firebase');
 
-const COLLECTION = 'users';
-
-function createToken(payload) {
-  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
-}
-
-exports.register = async (req, res) => {
-  try {
-    const { name, email, password, firebaseToken } = req.body;
-    
-    if (!name || !email) {
-      return res.status(400).json({ msg: 'Provide name and email' });
-    }
-
- 
-    if (!firebaseToken) {
-      return res.status(400).json({ msg: 'Firebase token is required for registration' });
-    }
-
-  
-    let firebaseUser;
-    try {
-      const decodedToken = await verifyFirebaseToken(firebaseToken);
-      firebaseUser = await getFirebaseUser(decodedToken.uid);
-    } catch (firebaseError) {
-      return res.status(401).json({ msg: 'Invalid Firebase token. User must be registered in Firebase first.' });
-    }
-
-   
-    if (firebaseUser.email !== email.toLowerCase()) {
-      return res.status(400).json({ msg: 'Email does not match Firebase account' });
-    }
-
-    const db = getDB();
-    const users = db.collection(COLLECTION);
-
-    
-    const existing = await users.findOne({ email: email.toLowerCase() });
-    if (existing) {
-      return res.status(400).json({ msg: 'Email already registered in MongoDB' });
-    }
-
-   
-    let hashed;
-    if (password) {
-     
-      const salt = await bcrypt.genSalt(10);
-      hashed = await bcrypt.hash(password, salt);
-    } else {
-      
-      hashed = 'social_login_placeholder_hash';
-    }
-
-    
-    const newUser = {
-      name,
-      email: email.toLowerCase(),
-      password: hashed, 
-      firebaseUID: firebaseUser.uid, 
-      role: 'user',
-      sentRequests: [], 
-      receivedRequests: [], 
-      connections: [], 
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    const result = await users.insertOne(newUser);
-
-    const userSafe = { 
-      id: result.insertedId.toString(), 
-      name: newUser.name, 
-      email: newUser.email,
-      firebaseUID: newUser.firebaseUID,
-      sentRequests: newUser.sentRequests 
-    };
-    const token = createToken({ userId: userSafe.id });
-
-    return res.status(201).json({ token, user: userSafe });
-  } catch (err) {
-    console.error('Register error:', err);
-    // handle duplicate key more gracefully
-    if (err.code === 11000) {
-      return res.status(400).json({ msg: 'Email already registered' });
-    }
-    return res.status(500).json({ msg: 'Server error' });
-  }
+// Helper to generate token
+const generateToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE || '30d'
+  });
 };
 
-exports.login = async (req, res) => {
+// @desc    Register user
+// @route   POST /api/auth/register
+// @access  Public
+exports.register = async (req, res) => {
   try {
-    const { email, password, firebaseToken } = req.body;
-    
-    if (!email) {
-      return res.status(400).json({ msg: 'Provide email' });
-    }
-
-    if (!firebaseToken) {
-      return res.status(400).json({ msg: 'Firebase token is required for login' });
-    }
-
-
-    let firebaseUser;
-    try {
-      const decodedToken = await verifyFirebaseToken(firebaseToken);
-      firebaseUser = await getFirebaseUser(decodedToken.uid);
-    } catch (firebaseError) {
-      return res.status(401).json({ msg: 'Invalid Firebase token. User must be registered in Firebase first.' });
-    }
-
-
-    if (firebaseUser.email !== email.toLowerCase()) {
-      return res.status(400).json({ msg: 'Email does not match Firebase account' });
-    }
-
+    const { name, email, password, photoURL, firebaseToken } = req.body;
     const db = getDB();
-    const users = db.collection(COLLECTION);
+    const users = db.collection('users');
 
+    let verifiedEmail = email;
+    let isSocialLogin = false;
 
-    const user = await users.findOne({ email: email.toLowerCase() });
+    // Verify Firebase Token if provided
+    if (firebaseToken) {
+        try {
+            const decodedToken = await verifyFirebaseToken(firebaseToken);
+            verifiedEmail = decodedToken.email;
+            isSocialLogin = true;
+        } catch (e) {
+            return res.status(401).json({ success: false, msg: 'Invalid social login token' });
+        }
+    }
 
-    if (!user) {
-      return res.status(404).json({ 
-        msg: 'User not found. Please register first. User must exist in MongoDB users collection.' 
+    // Check if user exists
+    const userExists = await users.findOne({ email: verifiedEmail });
+    if (userExists) {
+        // If it's a social login, we might want to just log them in or return error
+        // For register, usually better to say "already exists" or just return the token
+        if (isSocialLogin) {
+             const token = generateToken(userExists._id);
+             return res.status(200).json({
+                success: true,
+                token,
+                user: {
+                  _id: userExists._id,
+                  name: userExists.name,
+                  email: userExists.email,
+                  role: userExists.role,
+                  photoURL: userExists.photoURL
+                }
+             });
+        }
+      return res.status(400).json({
+        success: false,
+        msg: 'Email already registered'
       });
     }
 
-  
+    // Hash password if provided (not required for social login)
+    let hashedPassword = null;
     if (password) {
-
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(400).json({ msg: 'Invalid credentials' });
-      }
-    }
-  
-    if (user.firebaseUID && user.firebaseUID !== firebaseUser.uid) {
-      return res.status(400).json({ msg: 'Firebase UID mismatch' });
+        const salt = await bcrypt.genSalt(10);
+        hashedPassword = await bcrypt.hash(password, salt);
+    } else if (!isSocialLogin) {
+        return res.status(400).json({ success: false, msg: 'Password is required' });
     }
 
-    const userSafe = { 
-      id: user._id.toString(), 
-      name: user.name, 
-      email: user.email,
-      role: user.role || 'user',
-      sentRequests: user.sentRequests || [] 
+    // Create user
+    const newUser = {
+      name,
+      email: verifiedEmail,
+      password: hashedPassword,
+      photoURL: photoURL || '',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      role: 'user'
     };
-    const token = createToken({ userId: userSafe.id });
 
-    return res.json({ token, user: userSafe });
+    const result = await users.insertOne(newUser);
+    const user = await users.findOne({ _id: result.insertedId });
+
+    // Return token
+    const token = generateToken(user._id);
+
+    res.status(201).json({
+      success: true,
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        photoURL: user.photoURL
+      }
+    });
   } catch (err) {
-    console.error('Login error:', err);
-    return res.status(500).json({ msg: 'Server error' });
+    console.error(err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
   }
 };
 
+// @desc    Login user
+// @route   POST /api/auth/login
+// @access  Public
+exports.login = async (req, res) => {
+  try {
+    const { email, password, firebaseToken } = req.body;
+    const db = getDB();
+    const users = db.collection('users');
+
+    let targetEmail = email;
+    let isSocialLogin = false;
+
+    if (firebaseToken) {
+        try {
+            const decodedToken = await verifyFirebaseToken(firebaseToken);
+            targetEmail = decodedToken.email;
+            isSocialLogin = true;
+        } catch (e) {
+             return res.status(401).json({ success: false, msg: 'Invalid social login token' });
+        }
+    }
+
+    // Check for user
+    const user = await users.findOne({ email: targetEmail });
+    if (!user) {
+      if (isSocialLogin) {
+          // If social login and user not found in DB, arguably we could auto-register or return 404
+          // Client AuthContext handles 404 by then trying to register. So 404 is correct.
+          return res.status(404).json({ success: false, msg: 'User not found' });
+      }
+      return res.status(400).json({ success: false, msg: 'Invalid credentials' });
+    }
+
+    // Check password if standard login
+    if (!isSocialLogin) {
+        const isMatch = await bcrypt.compare(password, user.password || '');
+        if (!isMatch) {
+          return res.status(400).json({ success: false, msg: 'Invalid credentials' });
+        }
+    }
+
+    const token = generateToken(user._id);
+
+    res.status(200).json({
+      success: true,
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        photoURL: user.photoURL,
+        sentRequests: user.sentRequests || []
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
+  }
+};
+
+// @desc    Get current logged in user
+// @route   GET /api/auth/me
+// @access  Private
 exports.getProfile = async (req, res) => {
   try {
     const db = getDB();
-    const users = db.collection(COLLECTION);
-    const userId = req.userId; 
+    const user = await db.collection('users').findOne({ _id: new ObjectId(req.user._id) });
 
-    
-    const user = await users.findOne(
-      { _id: new ObjectId(userId) }, 
-      { projection: { password: 0 } } 
-    );
+    if (!user) {
+      return res.status(404).json({ success: false, msg: 'User not found' });
+    }
 
-    if (!user) return res.status(404).json({ msg: 'User not found' });
-
-    user.id = user._id.toString();
-    delete user._id;
-    return res.json({ user });
+    res.status(200).json({
+      success: true,
+      data: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        photoURL: user.photoURL,
+        sentRequests: user.sentRequests || []
+      }
+    });
   } catch (err) {
-    console.error('GetProfile error:', err);
-    return res.status(500).json({ msg: 'Server error' });
+    console.error(err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
   }
 };
 
+// @desc    Update user details
+// @route   PUT /api/auth/me
+// @access  Private
 exports.updateProfile = async (req, res) => {
   try {
-    const { name, password, bio, location, phone, photoURL, interests, education } = req.body;
-    const userId = req.userId; 
+    const { name, email } = req.body;
     const db = getDB();
-    const users = db.collection(COLLECTION);
-
-   
-    const updatedFields = {
-      updatedAt: new Date()
-    };
-
-    if (name) updatedFields.name = name;
-    if (bio) updatedFields.bio = bio;
-    if (location) updatedFields.location = location;
-    if (phone) updatedFields.phone = phone;
-    if (photoURL) updatedFields.photoURL = photoURL;
-    if (interests) updatedFields.interests = interests;
-    if (education) updatedFields.education = education;
-
-
     
-    if (password) {
-      if (password.length < 6) {
-        return res.status(400).json({ msg: 'Password must be at least 6 characters' });
-      }
-      const salt = await bcrypt.genSalt(10);
-      updatedFields.password = await bcrypt.hash(password, salt);
-    }
+    const updatedFields = { updatedAt: new Date() };
+    if (name) updatedFields.name = name;
+    if (email) updatedFields.email = email;
 
-    // Database e update operation chalai
-    const result = await users.findOneAndUpdate(
-      { _id: new ObjectId(userId) },
+    const result = await db.collection('users').findOneAndUpdate(
+      { _id: new ObjectId(req.user._id) },
       { $set: updatedFields },
-      { 
-        returnDocument: 'after', 
-        projection: { password: 0 } 
-      }
+      { returnDocument: 'after' }
     );
 
-    if (!result) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-
-    // result object-e ekhon notun user data ache
-    const updatedUser = result;
-    updatedUser.id = updatedUser._id.toString(); 
-    delete updatedUser._id;
-
-    return res.status(200).json({ 
-      user: updatedUser, 
-      msg: 'Profile updated successfully' 
+    res.status(200).json({
+      success: true,
+      data: result
     });
-
   } catch (err) {
-    console.error('UpdateProfile error:', err);
-    return res.status(500).json({ msg: 'Server error' });
+    console.error(err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
   }
 };
 
+// @desc    Delete user
+// @route   DELETE /api/auth/me
+// @access  Private
 exports.deleteProfile = async (req, res) => {
   try {
-    const userId = req.userId; 
     const db = getDB();
-    const users = db.collection(COLLECTION);
-    const partners = db.collection('partners'); 
-    const user = await users.findOne({ _id: new ObjectId(userId) });
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-    
-    const userEmail = user.email;
-
-    await users.deleteOne({ _id: new ObjectId(userId) });
-
-    if (userEmail) {
-      await partners.deleteOne({ email: userEmail });
-    }
-
-    return res.status(200).json({ 
-      msg: 'User and associated partner profile deleted successfully' 
-    });
-
-  } catch (err)
- {
-    console.error('DeleteProfile error:', err);
-    return res.status(500).json({ msg: 'Server error' });
+    await db.collection('users').deleteOne({ _id: new ObjectId(req.user._id) });
+    res.status(200).json({ success: true, msg: 'User deleted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
   }
 };
 
+// @desc    Send request
+// @route   POST /api/auth/request/send/:partnerId
+// @access  Private
 exports.sendRequest = async (req, res) => {
   try {
-    const { partnerId } = req.params; 
-    const userId = req.userId; 
-
-    if (!partnerId || partnerId.length !== 24) {
-      return res.status(400).json({ msg: 'Invalid Partner ID' });
-    }
-    
-    if (partnerId === userId) {
-      return res.status(400).json({ msg: 'You cannot send a request to yourself' });
-    }
+    const { partnerId } = req.params;
+    if (!partnerId) return res.status(400).json({ success: false, msg: 'Partner ID required' });
 
     const db = getDB();
-    const users = db.collection(COLLECTION);
-    const partners = db.collection('partners');
-    const requests = db.collection('requests');
+    const users = db.collection('users');
 
-
-    // Check if request already sent in user's sentRequests array
-    const user = await users.findOne({ _id: new ObjectId(userId) });
-    if (!user) {
-      return res.status(404).json({ msg: 'User not found' });
-    }
-
-    // First, try to find partner by ID in partners collection
-    let partner = await partners.findOne({ _id: new ObjectId(partnerId) });
-    let partnerUser;
-    let receiverUserId;
-
-    if (partner && partner.email) {
-      // Partner found, get user by email
-      partnerUser = await users.findOne({ email: partner.email });
-      if (partnerUser) {
-        receiverUserId = partnerUser._id.toString();
-      } else {
-        // Partner profile exists but user not found by email
-        // Try to find user directly by ID (for demo users or edge cases)
-        partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
-        if (!partnerUser) {
-          return res.status(404).json({ msg: 'Partner user not found for this partner profile' });
-        }
-        receiverUserId = partnerId;
-      }
-    } else {
-      // Partner not found in partners collection, try to find user directly by ID
-      // This handles demo users and cases where partnerId is actually a user ID
-      partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
-      if (!partnerUser) {
-        return res.status(404).json({ msg: 'Partner user not found' });
-      }
-      receiverUserId = partnerId;
-    }
-
-    // Check if request already sent
-    if (user.sentRequests && user.sentRequests.some(id => id.toString() === receiverUserId)) {
-      return res.status(200).json({ msg: 'Request already sent' });
-    }
-
-    // Check if request already exists in requests collection
-    const existingRequest = await requests.findOne({
-      senderId: new ObjectId(userId),
-      receiverId: new ObjectId(receiverUserId)
-    });
-
-    if (existingRequest) {
-      return res.status(200).json({ msg: 'Request already sent' });
-    }
-
-    // Create request document in requests collection
-    const requestDocument = {
-      senderId: new ObjectId(userId),
-      receiverId: new ObjectId(receiverUserId),
-      senderName: user.name || '',
-      receiverName: partnerUser.name || '',
-      status: 'pending', // pending, accepted, rejected, cancelled
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
-
-    const requestResult = await requests.insertOne(requestDocument);
-
-    // Update sender's sentRequests array
     await users.updateOne(
-      { _id: new ObjectId(userId) },
-      { $addToSet: { sentRequests: new ObjectId(receiverUserId) } } 
+      { _id: new ObjectId(req.user._id) },
+      { $addToSet: { sentRequests: partnerId } }
     );
 
-    // Update receiver's receivedRequests array
-    await users.updateOne(
-      { _id: new ObjectId(receiverUserId) },
-      { $addToSet: { receivedRequests: new ObjectId(userId) } } 
-    );
-
-    // Increment partner request count using $inc operator
-    if (partnerUser.email) {
-      await partners.updateOne(
-        { email: partnerUser.email },
-        { 
-          $inc: { requestCount: 1 },
-          $setOnInsert: {
-            email: partnerUser.email,
-            name: partnerUser.name || '',
-            createdAt: new Date(),
-            updatedAt: new Date()
-          }
-        },
-        { upsert: true }
-      );
-    }
-
-    return res.status(200).json({ 
-      msg: 'Request sent successfully',
-      requestId: requestResult.insertedId.toString()
-    });
-
+    res.status(200).json({ success: true, msg: 'Request sent successfully' });
   } catch (err) {
-    console.error('SendRequest error:', err);
-    return res.status(500).json({ msg: 'Server error' });
+    console.error('sendRequest error:', err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
   }
 };
 
+// @desc    Cancel request
+// @route   DELETE /api/auth/request/cancel/:partnerId
+// @access  Private
 exports.cancelRequest = async (req, res) => {
   try {
-    const { partnerId } = req.params; 
-    const userId = req.userId;
-
-    if (!partnerId || partnerId.length !== 24) {
-      return res.status(400).json({ msg: 'Invalid Partner ID' });
-    }
+    const { partnerId } = req.params;
+    if (!partnerId) return res.status(400).json({ success: false, msg: 'Partner ID required' });
 
     const db = getDB();
-    const users = db.collection(COLLECTION);
-    const partners = db.collection('partners');
-    const requests = db.collection('requests');
+    const users = db.collection('users');
 
-    // First, try to find partner by ID in partners collection
-    let partner = await partners.findOne({ _id: new ObjectId(partnerId) });
-    let partnerUser;
-    let receiverUserId;
-
-    if (partner && partner.email) {
-      // Partner found, get user by email
-      partnerUser = await users.findOne({ email: partner.email });
-      if (partnerUser) {
-        receiverUserId = partnerUser._id.toString();
-      } else {
-        // Partner profile exists but user not found by email
-        // Try to find user directly by ID (for demo users or edge cases)
-        partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
-        if (!partnerUser) {
-          return res.status(404).json({ msg: 'Partner user not found for this partner profile' });
-        }
-        receiverUserId = partnerId;
-      }
-    } else {
-      // Partner not found in partners collection, try to find user directly by ID
-      // This handles demo users and cases where partnerId is actually a user ID
-      partnerUser = await users.findOne({ _id: new ObjectId(partnerId) });
-      if (!partnerUser) {
-        return res.status(404).json({ msg: 'Partner user not found' });
-      }
-      receiverUserId = partnerId;
-    }
-    
-    // Delete request from requests collection
-    const deleteResult = await requests.deleteOne({
-      senderId: new ObjectId(userId),
-      receiverId: new ObjectId(receiverUserId)
-    });
-
-    if (deleteResult.deletedCount === 0) {
-      return res.status(404).json({ msg: 'Request not found' });
-    }
-    
-    // Remove request from sender's sentRequests array
     await users.updateOne(
-      { _id: new ObjectId(userId) },
-      { $pull: { sentRequests: new ObjectId(receiverUserId) } } 
+      { _id: new ObjectId(req.user._id) },
+      { $pull: { sentRequests: partnerId } }
     );
 
-    // Remove request from receiver's receivedRequests array
-    await users.updateOne(
-      { _id: new ObjectId(receiverUserId) },
-      { $pull: { receivedRequests: new ObjectId(userId) } } 
-    );
-    
-    // Decrement partner request count using $inc operator
-    if (partnerUser && partnerUser.email) {
-      await partners.updateOne(
-        { email: partnerUser.email },
-        { $inc: { requestCount: -1 } }
-      );
-    }
-
-    return res.status(200).json({ msg: 'Request cancelled successfully' });
-
+    res.status(200).json({ success: true, msg: 'Request cancelled successfully' });
   } catch (err) {
-    console.error('CancelRequest error:', err);
-    return res.status(500).json({ msg: 'Server error' });
+    console.error('cancelRequest error:', err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
   }
 };
 
-// GET - Get all requests (sent and received)
+// @desc    Get requests
+// @route   GET /api/auth/requests
+// @access  Private
 exports.getRequests = async (req, res) => {
   try {
-    const userId = req.userId;
-    const { type } = req.query; // 'sent', 'received', or 'all' (default)
-
-    if (!userId) {
-      return res.status(401).json({ msg: 'Unauthorized' });
-    }
-
     const db = getDB();
-    const requests = db.collection('requests');
-    const users = db.collection(COLLECTION);
-
-    let query = {};
+    const user = await db.collection('users').findOne({ _id: new ObjectId(req.user._id) });
     
-    // Filter based on type
-    if (type === 'sent') {
-      query = { senderId: new ObjectId(userId) };
-    } else if (type === 'received') {
-      query = { receiverId: new ObjectId(userId) };
-    } else {
-      // Get both sent and received requests
-      query = {
-        $or: [
-          { senderId: new ObjectId(userId) },
-          { receiverId: new ObjectId(userId) }
-        ]
-      };
-    }
-
-    // Fetch requests from database
-    const allRequests = await requests.find(query).sort({ createdAt: -1 }).toArray();
-
-    // Format the requests with user details
-    const formattedRequests = await Promise.all(
-      allRequests.map(async (request) => {
-        // Get sender details
-        const sender = await users.findOne(
-          { _id: request.senderId },
-          { projection: { name: 1, email: 1, _id: 1 } }
-        );
-
-        // Get receiver details
-        const receiver = await users.findOne(
-          { _id: request.receiverId },
-          { projection: { name: 1, email: 1, _id: 1 } }
-        );
-
-        return {
-          _id: request._id.toString(),
-          requestId: request._id.toString(),
-          senderId: request.senderId.toString(),
-          receiverId: request.receiverId.toString(),
-          senderName: sender?.name || request.senderName || '',
-          receiverName: receiver?.name || request.receiverName || '',
-          senderEmail: sender?.email || '',
-          receiverEmail: receiver?.email || '',
-          status: request.status || 'pending',
-          createdAt: request.createdAt,
-          updatedAt: request.updatedAt,
-          isSentByMe: request.senderId.toString() === userId,
-          isReceivedByMe: request.receiverId.toString() === userId
-        };
-      })
-    );
-
-    return res.status(200).json({
-      success: true,
-      count: formattedRequests.length,
-      type: type || 'all',
-      data: formattedRequests
-    });
-
+    res.status(200).json({ success: true, data: user?.sentRequests || [] });
   } catch (err) {
-    console.error('GetRequests error:', err);
-    return res.status(500).json({ 
-      success: false,
-      msg: 'Server error while fetching requests',
-      error: err.message 
-    });
+    console.error('getRequests error:', err);
+    res.status(500).json({ success: false, msg: 'Server Error' });
   }
 };

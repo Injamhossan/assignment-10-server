@@ -19,6 +19,7 @@ if (!process.env.JWT_SECRET) {
 console.log('JWT_SECRET loaded successfully (hidden for security)');
 const app = express();
 const allowedOrigins = [
+  'http://localhost:5173',
   'http://localhost:3000',
   'https://studymate-ih.netlify.app'
 ];
@@ -44,7 +45,7 @@ app.get('/api/test', (req, res) => {
   res.send('API test route is working!');
 });
 
-app.get('/', (req, res) => res.send('API running'));
+app.get('/', (req, res) => res.send('API running and API Connected'));
 
 const dbConnectionPromise = connectToDatabase(process.env.MONGO_URI)
   .catch(err => {
@@ -81,3 +82,4 @@ if (isVercel) {
     process.exit(1);
   });
 }
+
